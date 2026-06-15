@@ -122,6 +122,31 @@ button {
   margin-top: 16px;
 }
 
+/* Coupon-size panel: inline checkbox + quick presets */
+.check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  margin: 12px 0 4px;
+}
+.check input[type="checkbox"] {
+  width: auto;
+  margin: 0;
+}
+.presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 8px 0 4px;
+}
+.preset {
+  padding: 6px 10px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
 .tabs {
   display: flex;
   gap: 6px;
