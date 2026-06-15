@@ -8,8 +8,10 @@ import {
   loadImage,
   ensureFonts,
   drawCoupon,
+  cmToPx,
+  imageAspect,
 } from "@/lib/render";
-import { downloadPng, downloadPdf, downloadBulkZip } from "@/lib/export";
+import { downloadPng, downloadPdfCm, downloadBulkZip } from "@/lib/export";
 
 // Template files in /public. Discount falls back to the gift template if a
 // dedicated /public/template-discount.png isn't present.
@@ -17,6 +19,17 @@ const TEMPLATES = {
   gift: "/template.png",
   discount: "/template-discount.png",
 };
+
+// CSS pixels per centimetre at the standard 96 DPI. Used only to show the
+// preview at roughly its real-world size on screen.
+const SCREEN_PX_PER_CM = 96 / 2.54; // ≈ 37.8
+
+// A few handy presets (width × height in cm).
+const SIZE_PRESETS = [
+  { label: "Business card", w: 8.5, h: 5.4 },
+  { label: "Small (9×5)", w: 9, h: 5 },
+  { label: "Postcard A6", w: 14.8, h: 10.5 },
+];
 
 function formatDate(iso) {
   if (!iso) return "";
@@ -61,6 +74,12 @@ export default function Page() {
   const [dateIso, setDateIso] = useState("2026-07-25");
   const [code, setCode] = useState("0444-E436-4304");
 
+  // physical coupon size (in centimetres) + export quality
+  const [widthCm, setWidthCm] = useState(9);
+  const [heightCm, setHeightCm] = useState(5);
+  const [lockAspect, setLockAspect] = useState(true);
+  const [dpi, setDpi] = useState(300);
+
   // bulk
   const [csvText, setCsvText] = useState(
     "amount,date,code\n500,2026-07-25,0444-E436-4304\n250,2026-08-01,0445-A111-2222"
@@ -73,11 +92,47 @@ export default function Page() {
   const previewRef = useRef(null);
   const workRef = useRef(null); // hidden full-res canvas for export
 
+  // Exported image size in pixels, from the chosen cm size + DPI.
+  const targetW = cmToPx(widthCm, dpi);
+  const targetH = cmToPx(heightCm, dpi);
+
+  // Keep the preview snappy: render it at a lighter resolution than export.
+  const previewDpi = Math.min(dpi, 150);
+  const previewW = cmToPx(widthCm, previewDpi);
+  const previewH = cmToPx(heightCm, previewDpi);
+
   // How the strip value reads, based on voucher type.
   function amountDisplay(raw) {
     const v = (raw ?? "").toString().trim();
     if (!v) return "";
     return voucherType === "gift" ? `MVR ${v}` : v; // discount: free text like "20% OFF"
+  }
+
+  // Keep width/height locked to the template's aspect ratio when requested.
+  function changeWidth(v) {
+    if (isNaN(v)) return;
+    setWidthCm(v);
+    if (lockAspect && img && v > 0) {
+      setHeightCm(+(v / imageAspect(img)).toFixed(2));
+    }
+  }
+  function changeHeight(v) {
+    if (isNaN(v)) return;
+    setHeightCm(v);
+    if (lockAspect && img && v > 0) {
+      setWidthCm(+(v * imageAspect(img)).toFixed(2));
+    }
+  }
+  function toggleLock(on) {
+    setLockAspect(on);
+    if (on && img && widthCm > 0) {
+      setHeightCm(+(widthCm / imageAspect(img)).toFixed(2));
+    }
+  }
+  function applyPreset(p) {
+    setLockAspect(false); // a preset is an explicit width AND height
+    setWidthCm(p.w);
+    setHeightCm(p.h);
   }
 
   // Load template (per voucher type) + fonts.
@@ -112,6 +167,15 @@ export default function Page() {
     };
   }, [voucherType]);
 
+  // When a template first loads, snap the height to match its real proportions
+  // (only while aspect is locked) so the default size isn't stretched.
+  useEffect(() => {
+    if (img && lockAspect && widthCm > 0) {
+      setHeightCm(+(widthCm / imageAspect(img)).toFixed(2));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [img]);
+
   const singleData = useMemo(
     () => ({ amount: amountDisplay(amount), date: formatDate(dateIso), code }),
     [amount, dateIso, code, voucherType]
@@ -138,11 +202,14 @@ export default function Page() {
     return { amount: "", date: "", code: "" };
   }, [tab, singleData, csvText, voucherType, amount, dateIso]);
 
-  // Redraw preview whenever anything changes
+  // Redraw preview whenever anything changes — including the size.
   useEffect(() => {
     if (!img || !previewRef.current) return;
-    drawCoupon(previewRef.current, img, previewData, layout);
-  }, [img, previewData, layout]);
+    drawCoupon(previewRef.current, img, previewData, layout, {
+      width: previewW,
+      height: previewH,
+    });
+  }, [img, previewData, layout, previewW, previewH]);
 
   function updateField(field, key, value) {
     setLayout((prev) => ({
@@ -153,7 +220,10 @@ export default function Page() {
 
   function renderToWork(data) {
     if (!img) return null;
-    drawCoupon(workRef.current, img, data, layout);
+    drawCoupon(workRef.current, img, data, layout, {
+      width: targetW,
+      height: targetH,
+    });
     return workRef.current;
   }
 
@@ -161,7 +231,8 @@ export default function Page() {
     if (renderToWork(singleData)) downloadPng(workRef.current, `coupon-${code || "kokky"}.png`);
   }
   function handlePdf() {
-    if (renderToWork(singleData)) downloadPdf(workRef.current, `coupon-${code || "kokky"}.pdf`);
+    if (renderToWork(singleData))
+      downloadPdfCm(workRef.current, `coupon-${code || "kokky"}.pdf`, widthCm, heightCm);
   }
 
   async function handleBulk() {
@@ -189,12 +260,17 @@ export default function Page() {
           code: (r.code ?? "").toString().trim(),
         };
         const c = document.createElement("canvas");
-        drawCoupon(c, img, data, layout);
-        items.push({ canvas: c, name: data.code || `coupon-${i + 1}` });
+        drawCoupon(c, img, data, layout, { width: targetW, height: targetH });
+        items.push({
+          canvas: c,
+          name: data.code || `coupon-${i + 1}`,
+          widthMm: widthCm * 10,
+          heightMm: heightCm * 10,
+        });
       });
       await downloadBulkZip(items, "kokky-coupons.zip", 3);
       setBulkMsg(
-        `Generated ${items.length} coupon(s): individual PNGs + a 3-up A4 print sheet. Check your downloads.`
+        `Generated ${items.length} coupon(s) at ${widthCm}×${heightCm} cm: individual PNGs + a 3-up A4 print sheet. Check your downloads.`
       );
     } catch (e) {
       setBulkMsg("Error: " + e.message);
@@ -276,6 +352,65 @@ export default function Page() {
             </select>
           </div>
 
+          <div className="panel" style={{ marginBottom: 12 }}>
+            <h2>Coupon size</h2>
+            <div className="row">
+              <div>
+                <label>Width (cm)</label>
+                <input
+                  type="number"
+                  min="1"
+                  step="0.1"
+                  value={widthCm}
+                  onChange={(e) => changeWidth(parseFloat(e.target.value))}
+                />
+              </div>
+              <div>
+                <label>Height (cm)</label>
+                <input
+                  type="number"
+                  min="1"
+                  step="0.1"
+                  value={heightCm}
+                  onChange={(e) => changeHeight(parseFloat(e.target.value))}
+                />
+              </div>
+            </div>
+
+            <label className="check">
+              <input
+                type="checkbox"
+                checked={lockAspect}
+                onChange={(e) => toggleLock(e.target.checked)}
+              />
+              Lock to template shape (no stretching)
+            </label>
+
+            <div className="presets">
+              {SIZE_PRESETS.map((p) => (
+                <button
+                  key={p.label}
+                  type="button"
+                  className="btn-ghost preset"
+                  onClick={() => applyPreset(p)}
+                >
+                  {p.label}
+                </button>
+              ))}
+            </div>
+
+            <label>Print quality</label>
+            <select value={dpi} onChange={(e) => setDpi(parseInt(e.target.value, 10))}>
+              <option value={150}>Draft — 150 DPI</option>
+              <option value={300}>Standard print — 300 DPI</option>
+              <option value={600}>High — 600 DPI</option>
+            </select>
+
+            <p className="hint">
+              Output image: {targetW} × {targetH} px ({widthCm}×{heightCm} cm).
+            </p>
+          </div>
+
           {tab === "single" ? (
             <div className="panel">
               <h2>Coupon details</h2>
@@ -349,7 +484,9 @@ export default function Page() {
 
         <div className="preview-col">
           <div className="preview-bar">
-            <span>Live preview{tab === "bulk" ? " (first row)" : ""}</span>
+            <span>
+              Live preview{tab === "bulk" ? " (first row)" : ""} · {widthCm}×{heightCm} cm
+            </span>
             <div className="zoom">
               <button className="btn-ghost" onClick={() => setZoom((z) => Math.max(0.25, +(z - 0.25).toFixed(2)))}>−</button>
               <span>{Math.round(zoom * 100)}%</span>
@@ -358,7 +495,13 @@ export default function Page() {
             </div>
           </div>
           <div className="preview-stage">
-            <canvas ref={previewRef} style={{ width: zoom * 100 + "%", height: "auto" }} />
+            <canvas
+              ref={previewRef}
+              style={{
+                width: widthCm * SCREEN_PX_PER_CM * zoom + "px",
+                height: heightCm * SCREEN_PX_PER_CM * zoom + "px",
+              }}
+            />
           </div>
           <canvas ref={workRef} style={{ display: "none" }} />
           {!img && !imgError && <p className="hint">Loading template…</p>}
