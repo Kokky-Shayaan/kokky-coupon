@@ -99,24 +99,6 @@ Once it looks perfect, you can make those values the permanent defaults: open
 
 ---
 
-## Project structure
-
-```
-kokky-coupon-maker/
-├─ app/
-│  ├─ layout.js        app shell
-│  ├─ page.js          the whole UI (form, preview, sliders, bulk)
-│  └─ globals.css      styles + @font-face for your fonts
-├─ lib/
-│  ├─ render.js        draws a coupon on canvas (+ DEFAULT_LAYOUT to tune)
-│  └─ export.js        PNG / PDF / ZIP download helpers
-├─ public/
-│  ├─ template.png     ← YOU ADD THIS
-│  └─ fonts/           ← YOU ADD Skynight.otf + Bestime.ttf
-├─ package.json
-└─ README.md
-```
-
 ## Notes
 - Barcode format is CODE128 (works with most scanners). To change it, edit the
   `format` option in `lib/render.js`.
